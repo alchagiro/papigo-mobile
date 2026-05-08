@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 800">
+  <rect width="400" height="800" fill="#00ab67"/>
+  <text x="200" y="400" font-size="120" text-anchor="middle" fill="white" font-weight="bold" font-family="Arial">PapiGo</text>
+  <text x="200" y="450" font-size="24" text-anchor="middle" fill="white" font-family="Arial">Tu viaje, nuestra prioridad</text>
+</svg>
