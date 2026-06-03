@@ -41,9 +41,6 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "eas": {
-        "projectId": "your-project-id"
-      },
       "API_URL": "https://papigo-api.onrender.com/api",
       "SOCKET_URL": "https://papigo-api.onrender.com"
     },
