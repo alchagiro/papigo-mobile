@@ -312,65 +312,7 @@ export default function HomeScreen({ navigation }) {
         </View>
       </Modal>
 
-      <Modal visible={showNegotiationModal} transparent animationType="slide" onRequestClose={() => {}}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.negotiationModal}>
-            <Text style={styles.modalTitle}>Nueva Oferta</Text>
-            
-            <View style={styles.offerCard}>
-              <Text style={styles.offerLabel}>Oferta actual:</Text>
-              <Text style={styles.offerAmount}>
-                {formatCOP(currentOffer?.offeredFare)}
-              </Text>
-              <Text style={styles.offerBy}>
-                Ultima oferta por: {currentOffer?.last_offer_by === "driver" ? "Conductor" : "Pasajero"}
-              </Text>
-            </View>
 
-            <Text style={styles.inputLabel}>Tu contra-oferta:</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Ingresa tu monto"
-              value={counterAmount}
-              onChangeText={setCounterAmount}
-              keyboardType="numeric"
-              editable={!waitingResponse}
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.acceptButton}
-                onPress={handleAcceptOffer}
-                disabled={waitingResponse}
-              >
-                <Text style={styles.buttonText}>Aceptar</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.counterButton}
-                onPress={handleCounterOffer}
-                disabled={waitingResponse || !counterAmount}
-              >
-                {waitingResponse ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text style={styles.buttonText}>Contra-ofertar</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => {
-                setShowNegotiationModal(false);
-                setWaitingResponse(false);
-              }}
-            >
-              <Text style={styles.cancelButtonText}>Cerrar</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
