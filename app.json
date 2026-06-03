@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#00ab67"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.papigo.app",
@@ -29,7 +31,9 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION"
+        "ACCESS_BACKGROUND_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ],
       "config": {
         "googleMaps": {
@@ -42,7 +46,10 @@
     },
     "extra": {
       "API_URL": "https://papigo-api.onrender.com/api",
-      "SOCKET_URL": "https://papigo-api.onrender.com"
+      "SOCKET_URL": "https://papigo-api.onrender.com",
+      "eas": {
+        "projectId": "fddcd95e-296f-4e90-bc96-5b484b52dc33"
+      }
     },
     "plugins": [
       [
@@ -51,6 +58,7 @@
           "locationAlwaysAndWhenInUsePermission": "PapiGo necesita acceso a tu ubicacion para funcionar correctamente."
         }
       ]
-    ]
+    ],
+    "owner": "achamorrogs-organization"
   }
 }
