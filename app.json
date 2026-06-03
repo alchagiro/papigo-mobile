@@ -57,7 +57,8 @@
         {
           "locationAlwaysAndWhenInUsePermission": "PapiGo necesita acceso a tu ubicacion para funcionar correctamente."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "owner": "achamorrogs-organization"
   }
