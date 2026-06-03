@@ -1,6 +1,5 @@
 import { io } from "socket.io-client";
-
-const SOCKET_URL = "http://localhost:3001";
+import { SOCKET_URL } from "../config";
 
 let socket = null;
 
@@ -10,6 +9,14 @@ export const initSocket = () => {
   socket = io(SOCKET_URL, {
     transports: ["websocket"],
     autoConnect: true,
+  });
+
+  socket.on("connect", () => {
+    console.log("Socket connected");
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Socket disconnected");
   });
 
   return socket;
@@ -23,6 +30,11 @@ export const getSocket = () => {
 export const joinTrip = (tripId) => {
   const socket = getSocket();
   socket.emit("join-trip", tripId);
+};
+
+export const joinDrivers = (driverId) => {
+  const socket = getSocket();
+  socket.emit("join-drivers", { driverId });
 };
 
 export const updateDriverLocation = (data) => {
@@ -47,9 +59,22 @@ export const onStatusUpdated = (callback) => {
   return () => socket.off("status-updated", callback);
 };
 
-export const joinDrivers = () => {
+export const onNewTripRequest = (callback) => {
   const socket = getSocket();
-  socket.emit("join-drivers");
+  socket.on("new-trip-request", callback);
+  return () => socket.off("new-trip-request", callback);
+};
+
+export const onDriverCancelled = (callback) => {
+  const socket = getSocket();
+  socket.on("driver-cancelled", callback);
+  return () => socket.off("driver-cancelled", callback);
+};
+
+export const onTripCancelled = (callback) => {
+  const socket = getSocket();
+  socket.on("trip-cancelled", callback);
+  return () => socket.off("trip-cancelled", callback);
 };
 
 export const disconnectSocket = () => {

@@ -1,14 +1,18 @@
 import React, { createContext, useState, useContext, useEffect } from "react";
+import * as SecureStore from "expo-secure-store";
 import axios from "axios";
-
-const API_URL = "http://localhost:3001/api";
+import { API_URL } from "../config";
 
 const api = axios.create({ baseURL: API_URL });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+api.interceptors.request.use(async (config) => {
+  try {
+    const token = await SecureStore.getItemAsync("token");
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  } catch (error) {
+    console.error("Error getting token:", error);
   }
   return config;
 });
@@ -19,9 +23,29 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    loadUser();
+  }, []);
+
+  const loadUser = async () => {
+    try {
+      const token = await SecureStore.getItemAsync("token");
+      const userData = await SecureStore.getItemAsync("user");
+      if (token && userData) {
+        setUser(JSON.parse(userData));
+      }
+    } catch (error) {
+      console.error("Error loading user:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const login = async (email, password) => {
     const response = await api.post("/auth/login", { email, password });
     const { user: userData, token } = response.data;
+    await SecureStore.setItemAsync("token", token);
+    await SecureStore.setItemAsync("user", JSON.stringify(userData));
     setUser(userData);
     return userData;
   };
@@ -35,11 +59,21 @@ export const AuthProvider = ({ children }) => {
       role,
     });
     const { user: userData, token } = response.data;
+    await SecureStore.setItemAsync("token", token);
+    await SecureStore.setItemAsync("user", JSON.stringify(userData));
     setUser(userData);
     return userData;
   };
 
-  const logout = () => setUser(null);
+  const logout = async () => {
+    try {
+      await SecureStore.deleteItemAsync("token");
+      await SecureStore.deleteItemAsync("user");
+    } catch (error) {
+      console.error("Error logging out:", error);
+    }
+    setUser(null);
+  };
 
   const value = { user, loading, login, register, logout };
 

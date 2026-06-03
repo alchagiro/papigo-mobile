@@ -5,90 +5,226 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../context/AuthContext";
 
 export default function TripHistoryScreen({ navigation }) {
-  const { logout } = useAuth();
+  const { user } = useAuth();
   const [trips, setTrips] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    fetchTrips();
+    fetchHistory();
   }, []);
 
-  const fetchTrips = async () => {
+  const fetchHistory = async () => {
     try {
       const response = await api.get("/trips/history");
       setTrips(response.data);
     } catch (error) {
-      console.error("Failed to fetch trips");
+      console.error("Error fetching history:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchHistory();
+    setRefreshing(false);
+  };
+
+  const formatCOP = (amount) => {
+    if (!amount) return "N/A";
+    return new Intl.NumberFormat("es-CO", {
+      style: "currency",
+      currency: "COP",
+      minimumFractionDigits: 0,
+    }).format(amount);
+  };
+
   const formatDate = (dateStr) => {
+    if (!dateStr) return "Fecha no disponible";
     const date = new Date(dateStr);
-    return date.toLocaleDateString("en-US", {
+    return date.toLocaleDateString("es-CO", {
       year: "numeric",
-      month: "short",
+      month: "long",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     });
   };
 
+  const statusLabels = {
+    pending: "Pendiente",
+    accepted: "Aceptado",
+    in_progress: "En curso",
+    completed: "Completado",
+    cancelled: "Cancelado",
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case "completed":
+        return { bg: "#d4edda", color: "#155724" };
+      case "cancelled":
+        return { bg: "#f8d7da", color: "#721c24" };
+      case "in_progress":
+        return { bg: "#cce5ff", color: "#004085" };
+      case "accepted":
+        return { bg: "#fff3cd", color: "#856404" };
+      default:
+        return { bg: "#f8f9fa", color: "#333" };
+    }
+  };
+
+  const activeTrips = trips.filter(
+    (t) => t.status === "pending" || t.status === "accepted" || t.status === "in_progress"
+  );
+  const pastTrips = trips.filter(
+    (t) => t.status === "completed" || t.status === "cancelled"
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.backButtonText}>← Back</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={styles.backButton}>← Atras</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Trip History</Text>
-        <TouchableOpacity style={styles.headerButton} onPress={logout}>
-          <Text style={styles.headerButtonText}>Logout</Text>
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Historial</Text>
       </View>
 
-      <ScrollView style={styles.content}>
-        {trips.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>📋</Text>
-            <Text style={styles.emptyText}>No trips yet</Text>
-          </View>
-        ) : (
-          trips.map((trip) => (
-            <TouchableOpacity
-              key={trip.id}
-              style={styles.tripCard}
-              onPress={() =>
-                navigation.navigate("TripProgress", { tripId: trip.id })
-              }
-            >
-              <View style={styles.tripHeader}>
-                <Text style={styles.date}>{formatDate(trip.created_at)}</Text>
-                <View style={[styles.statusBadge, styles[`status${trip.status}`]]}>
-                  <Text style={styles.statusText}>{trip.status}</Text>
-                </View>
-              </View>
-              <Text style={styles.detail}>
-                <Text style={styles.bold}>From:</Text> {trip.pickup_address}
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#00ab67" />
+          <Text style={styles.loadingText}>Cargando historial...</Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.content}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        >
+          {trips.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyIcon}>📋</Text>
+              <Text style={styles.emptyTitle}>No hay viajes</Text>
+              <Text style={styles.emptyText}>
+                {user?.role === "driver"
+                  ? "Aun no has completado viajes como conductor."
+                  : "Aun no has solicitado viajes."}
               </Text>
-              <Text style={styles.detail}>
-                <Text style={styles.bold}>To:</Text> {trip.dropoff_address}
-              </Text>
-              {trip.fare && (
-                <Text style={styles.detail}>
-                  <Text style={styles.bold}>Fare:</Text> ${trip.fare} |{" "}
-                  <Text style={styles.bold}>Distance:</Text> {trip.distance} km
-                </Text>
+            </View>
+          ) : (
+            <>
+              {activeTrips.length > 0 && (
+                <>
+                  <Text style={styles.sectionTitle}>Viajes Activos</Text>
+                  {activeTrips.map((trip) => {
+                    const statusColors = getStatusColor(trip.status);
+                    return (
+                      <TouchableOpacity
+                        key={trip.id}
+                        style={styles.tripCard}
+                        onPress={() => navigation.navigate("TripProgress", { tripId: trip.id })}
+                      >
+                        <View style={styles.tripHeader}>
+                          <Text style={styles.tripDate}>{formatDate(trip.created_at)}</Text>
+                          <View style={[styles.statusBadge, { backgroundColor: statusColors.bg }]}>
+                            <Text style={[styles.statusText, { color: statusColors.color }]}>
+                              {statusLabels[trip.status]}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.tripRoute}>
+                          <View style={styles.routePoint}>
+                            <View style={[styles.routeDot, { backgroundColor: "#00ab67" }]} />
+                            <Text style={styles.routeText}>{trip.pickup_address}</Text>
+                          </View>
+                          <View style={styles.routePoint}>
+                            <View style={[styles.routeDot, { backgroundColor: "#000" }]} />
+                            <Text style={styles.routeText}>{trip.dropoff_address}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.tripFooter}>
+                          {trip.driver_name && (
+                            <Text style={styles.personText}>
+                              Conductor: {trip.driver_name}
+                            </Text>
+                          )}
+                          {trip.passenger_name && user?.role === "driver" && (
+                            <Text style={styles.personText}>
+                              Pasajero: {trip.passenger_name}
+                            </Text>
+                          )}
+                          {trip.fare && (
+                            <Text style={styles.fareText}>{formatCOP(trip.fare)}</Text>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </>
               )}
-            </TouchableOpacity>
-          ))
-        )}
-      </ScrollView>
+
+              {pastTrips.length > 0 && (
+                <>
+                  <Text style={styles.sectionTitle}>Viajes Pasados</Text>
+                  {pastTrips.map((trip) => {
+                    const statusColors = getStatusColor(trip.status);
+                    return (
+                      <TouchableOpacity
+                        key={trip.id}
+                        style={styles.tripCard}
+                        onPress={() => navigation.navigate("TripProgress", { tripId: trip.id })}
+                      >
+                        <View style={styles.tripHeader}>
+                          <Text style={styles.tripDate}>{formatDate(trip.created_at)}</Text>
+                          <View style={[styles.statusBadge, { backgroundColor: statusColors.bg }]}>
+                            <Text style={[styles.statusText, { color: statusColors.color }]}>
+                              {statusLabels[trip.status]}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.tripRoute}>
+                          <View style={styles.routePoint}>
+                            <View style={[styles.routeDot, { backgroundColor: "#00ab67" }]} />
+                            <Text style={styles.routeText}>{trip.pickup_address}</Text>
+                          </View>
+                          <View style={styles.routePoint}>
+                            <View style={[styles.routeDot, { backgroundColor: "#000" }]} />
+                            <Text style={styles.routeText}>{trip.dropoff_address}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.tripFooter}>
+                          {trip.driver_name && (
+                            <Text style={styles.personText}>
+                              Conductor: {trip.driver_name}
+                            </Text>
+                          )}
+                          {trip.passenger_name && user?.role === "driver" && (
+                            <Text style={styles.personText}>
+                              Pasajero: {trip.passenger_name}
+                            </Text>
+                          )}
+                          {trip.fare && (
+                            <Text style={styles.fareText}>{formatCOP(trip.fare)}</Text>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </>
+              )}
+            </>
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -101,36 +237,29 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     padding: 16,
-    backgroundColor: "white",
+    backgroundColor: "#000",
     paddingTop: 50,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    elevation: 4,
   },
   backButton: {
-    marginRight: 8,
-  },
-  backButtonText: {
     fontSize: 16,
-    color: "#276ef1",
+    color: "#fff",
+    marginRight: 16,
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
+    color: "#fff",
+  },
+  loadingContainer: {
     flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  headerButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
-    backgroundColor: "#f5f5f5",
-  },
-  headerButtonText: {
-    fontSize: 14,
-    color: "#333",
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: "#666",
   },
   content: {
     flex: 1,
@@ -138,63 +267,95 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     alignItems: "center",
-    padding: 40,
+    paddingVertical: 60,
   },
   emptyIcon: {
-    fontSize: 48,
+    fontSize: 64,
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#333",
     marginBottom: 8,
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: 14,
     color: "#666",
+    textAlign: "center",
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 12,
+    marginTop: 8,
   },
   tripCard: {
     backgroundColor: "white",
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    elevation: 2,
   },
   tripHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  date: {
-    fontSize: 16,
-    fontWeight: "600",
+  tripDate: {
+    fontSize: 12,
+    color: "#666",
+    flex: 1,
   },
   statusBadge: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 20,
-  },
-  statuspending: {
-    backgroundColor: "#fff3cd",
-  },
-  statusaccepted: {
-    backgroundColor: "#cce5ff",
-  },
-  statusin_progress: {
-    backgroundColor: "#d4edda",
-  },
-  statuscompleted: {
-    backgroundColor: "#d4edda",
-  },
-  statuscancelled: {
-    backgroundColor: "#f8d7da",
+    borderRadius: 12,
   },
   statusText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "600",
     textTransform: "uppercase",
   },
-  detail: {
-    fontSize: 14,
-    marginBottom: 4,
-    color: "#333",
+  tripRoute: {
+    marginBottom: 12,
   },
-  bold: {
-    fontWeight: "600",
+  routePoint: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  routeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 12,
+  },
+  routeText: {
+    fontSize: 14,
+    color: "#333",
+    flex: 1,
+  },
+  tripFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+    paddingTop: 12,
+  },
+  personText: {
+    fontSize: 12,
+    color: "#666",
+    flex: 1,
+  },
+  fareText: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#00ab67",
   },
 });

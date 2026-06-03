@@ -6,160 +6,198 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
 } from "react-native";
 import { useAuth } from "../context/AuthContext";
 
 export default function RegisterScreen({ navigation }) {
+  const { register } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [role, setRole] = useState("passenger");
   const [loading, setLoading] = useState(false);
-  const { register } = useAuth();
 
   const handleRegister = async () => {
     if (!name || !email || !password) {
-      Alert.alert("Error", "Please fill in required fields");
+      Alert.alert("Error", "Por favor completa los campos obligatorios");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert("Error", "Las contrasenas no coinciden");
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert("Error", "La contrasena debe tener al menos 6 caracteres");
       return;
     }
 
     setLoading(true);
     try {
-      await register(name, email, phone, password, role);
+      const user = await register(name, email, phone, password, role);
+      Alert.alert(
+        "Registro Exitoso",
+        `Bienvenido ${user.name}! Tu cuenta como ${role === "driver" ? "conductor" : "pasajero"} ha sido creada.`
+      );
     } catch (error) {
-      Alert.alert("Registration Failed", error.response?.data?.error || "Registration failed");
+      Alert.alert(
+        "Error de Registro",
+        error.response?.data?.error || "No se pudo crear la cuenta"
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Create Account</Text>
-        <Text style={styles.subtitle}>Join Uber Clone</Text>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.container}
+    >
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.backButton}>← Atras</Text>
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>UBER</Text>
+          <View style={{ width: 50 }} />
+        </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Full Name"
-          value={name}
-          onChangeText={setName}
-        />
+        <View style={styles.formContainer}>
+          <Text style={styles.title}>Crear Cuenta</Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Nombre completo *"
+            value={name}
+            onChangeText={setName}
+            autoCapitalize="words"
+          />
 
-        <TextInput
-          style={styles.input}
-          placeholder="Phone (optional)"
-          value={phone}
-          onChangeText={setPhone}
-          keyboardType="phone-pad"
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Correo electronico *"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
 
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Telefono (opcional)"
+            value={phone}
+            onChangeText={setPhone}
+            keyboardType="phone-pad"
+          />
 
-        <View style={styles.roleContainer}>
-          <TouchableOpacity
-            style={[
-              styles.roleButton,
-              role === "passenger" && styles.roleButtonActive,
-            ]}
-            onPress={() => setRole("passenger")}
-          >
-            <Text
-              style={[
-                styles.roleButtonText,
-                role === "passenger" && styles.roleButtonTextActive,
-              ]}
+          <TextInput
+            style={styles.input}
+            placeholder="Contrasena *"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Confirmar contrasena *"
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            secureTextEntry
+          />
+
+          <Text style={styles.roleLabel}>Tipo de cuenta:</Text>
+          <View style={styles.roleContainer}>
+            <TouchableOpacity
+              style={[styles.roleButton, role === "passenger" && styles.roleActive]}
+              onPress={() => setRole("passenger")}
             >
-              Passenger
-            </Text>
+              <Text style={[styles.roleText, role === "passenger" && styles.roleTextActive]}>
+                Pasajero
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.roleButton, role === "driver" && styles.roleActive]}
+              onPress={() => setRole("driver")}
+            >
+              <Text style={[styles.roleText, role === "driver" && styles.roleTextActive]}>
+                Conductor
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handleRegister}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text style={styles.buttonText}>Crear Cuenta</Text>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[
-              styles.roleButton,
-              role === "driver" && styles.roleButtonActive,
-            ]}
-            onPress={() => setRole("driver")}
+            style={styles.linkButton}
+            onPress={() => navigation.goBack()}
           >
-            <Text
-              style={[
-                styles.roleButtonText,
-                role === "driver" && styles.roleButtonTextActive,
-              ]}
-            >
-              Driver
+            <Text style={styles.linkText}>
+              Ya tienes cuenta? <Text style={styles.linkBold}>Inicia Sesion</Text>
             </Text>
           </TouchableOpacity>
         </View>
-
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleRegister}
-          disabled={loading}
-        >
-          <Text style={styles.buttonText}>
-            {loading ? "Creating account..." : "Sign Up"}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => navigation.navigate("Login")}
-          style={styles.linkButton}
-        >
-          <Text style={styles.linkText}>
-            Already have an account? Sign in
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flexGrow: 1,
-    backgroundColor: "#f5f5f5",
-    justifyContent: "center",
-    padding: 20,
+    flex: 1,
+    backgroundColor: "#000",
   },
-  card: {
-    backgroundColor: "white",
-    borderRadius: 12,
+  scrollContent: {
+    flexGrow: 1,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    paddingTop: 50,
+  },
+  backButton: {
+    fontSize: 16,
+    color: "#fff",
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#fff",
+  },
+  formContainer: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 24,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingTop: 32,
   },
   title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
+    fontSize: 24,
+    fontWeight: "600",
     marginBottom: 24,
+    textAlign: "center",
   },
   input: {
     backgroundColor: "#f8f9fa",
@@ -170,29 +208,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e0e0e0",
   },
+  roleLabel: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 8,
+  },
   roleContainer: {
     flexDirection: "row",
     gap: 12,
-    marginBottom: 16,
+    marginBottom: 24,
   },
   roleButton: {
     flex: 1,
-    padding: 12,
+    padding: 16,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ddd",
     alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#e0e0e0",
   },
-  roleButtonActive: {
-    backgroundColor: "#000",
-    borderColor: "#000",
+  roleActive: {
+    borderColor: "#00ab67",
+    backgroundColor: "#e8f5e9",
   },
-  roleButtonText: {
-    fontSize: 14,
+  roleText: {
+    fontSize: 16,
     color: "#666",
   },
-  roleButtonTextActive: {
-    color: "white",
+  roleTextActive: {
+    color: "#00ab67",
     fontWeight: "600",
   },
   button: {
@@ -211,11 +254,15 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   linkButton: {
-    marginTop: 16,
     alignItems: "center",
+    padding: 16,
   },
   linkText: {
-    color: "#276ef1",
     fontSize: 14,
+    color: "#666",
+  },
+  linkBold: {
+    color: "#000",
+    fontWeight: "600",
   },
 });

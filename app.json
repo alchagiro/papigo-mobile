@@ -4,27 +4,56 @@
     "slug": "papigo",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.svg",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/splash.svg",
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#00ab67"
     },
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.papigo.app"
+      "bundleIdentifier": "com.papigo.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "PapiGo necesita tu ubicacion para localizarte y mostrarte en el mapa.",
+        "NSLocationAlwaysUsageDescription": "PapiGo necesita tu ubicacion para rastrear viajes activos."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.svg",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#00ab67"
       },
-      "package": "com.papigo.app"
+      "package": "com.papigo.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+        }
+      }
     },
     "web": {
-      "favicon": "./assets/favicon.svg"
-    }
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      },
+      "API_URL": "https://papigo-api.onrender.com/api",
+      "SOCKET_URL": "https://papigo-api.onrender.com"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "PapiGo necesita acceso a tu ubicacion para funcionar correctamente."
+        }
+      ]
+    ]
   }
 }
