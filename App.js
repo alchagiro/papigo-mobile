@@ -2,13 +2,13 @@ import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import LoginScreen from "./screens/LoginScreen";
-import RegisterScreen from "./screens/RegisterScreen";
-import HomeScreen from "./screens/HomeScreen";
-import DriverHomeScreen from "./screens/DriverHomeScreen";
-import TripProgressScreen from "./screens/TripProgressScreen";
-import TripHistoryScreen from "./screens/TripHistoryScreen";
-import { AuthProvider } from "./context/AuthContext";
+import LoginScreen from "./src/screens/LoginScreen";
+import RegisterScreen from "./src/screens/RegisterScreen";
+import HomeScreen from "./src/screens/HomeScreen";
+import DriverHomeScreen from "./src/screens/DriverHomeScreen";
+import TripProgressScreen from "./src/screens/TripProgressScreen";
+import TripHistoryScreen from "./src/screens/TripHistoryScreen";
+import { AuthProvider } from "./src/context/AuthContext";
 
 const Stack = createNativeStackNavigator();
 
