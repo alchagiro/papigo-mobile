@@ -1,14 +1,7 @@
 ﻿node_modules/
-# Exclude large Android build artifacts (EAS regenerates these)
-android/.gradle/
-android/build/
-android/app/build/
-android/app/.cxx/
-android/app/src/main/assets/
-android/captures/
-android/local.properties
+# Exclude android native project - let EAS regenerate via prebuild
+android/
 # Exclude expo prebuild artifacts
 .expo/
 web-build/
 dist/
-
