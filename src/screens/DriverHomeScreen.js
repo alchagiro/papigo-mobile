@@ -202,7 +202,7 @@ export default function DriverHomeScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>UBER - Conductor</Text>
+        <Text style={styles.headerTitle}>PapiGo - Conductor</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.headerButton}

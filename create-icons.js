@@ -4,54 +4,57 @@ const path = require('path');
 // Create a simple 512x512 PNG with a green background and white car
 // This is a minimal PNG file (we'll create a solid color PNG)
 
-function createPNG(width, height, r, g, b) {
-  // PNG signature
-  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  
-  // IHDR chunk
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  // Rest of IHDR data for RGBA...
-  
-  // For simplicity, let's just copy a pre-made minimal PNG
-  // Actually, let's create a solid color PNG using raw pixel data
-  
+function createPNG(width, height, r, g, b, drawP = false) {
   const zlib = require('zlib');
-  
-  // Create raw image data (RGBA)
   const rawData = Buffer.alloc(width * height * 4);
+  
   for (let i = 0; i < width * height; i++) {
-    rawData[i * 4] = r;     // R
-    rawData[i * 4 + 1] = g; // G
-    rawData[i * 4 + 2] = b; // B
-    rawData[i * 4 + 3] = 255; // A
+    rawData[i * 4] = r;
+    rawData[i * 4 + 1] = g;
+    rawData[i * 4 + 2] = b;
+    rawData[i * 4 + 3] = 255;
   }
   
-  // Compress
+  if (drawP) {
+    const cx = Math.floor(width / 2);
+    const cy = Math.floor(height / 2);
+    const radius = Math.floor(Math.min(width, height) * 0.35);
+    const thickness = Math.floor(radius * 0.25);
+    
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist <= radius && dist >= radius - thickness) {
+          const idx = (y * width + x) * 4;
+          rawData[idx] = 255;
+          rawData[idx + 1] = 255;
+          rawData[idx + 2] = 255;
+          rawData[idx + 3] = 255;
+        }
+      }
+    }
+  }
+  
   const compressed = zlib.deflateSync(rawData);
   
-  // Build PNG
-  const chunks = [];
-  chunks.push(signature);
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const chunks = [signature];
   
-  // IHDR
   const ihdrData = Buffer.alloc(13);
   ihdrData.writeUInt32BE(width, 0);
   ihdrData.writeUInt32BE(height, 4);
-  ihdrData[8] = 8; // bit depth
-  ihdrData[9] = 6; // color type: RGBA
-  ihdrData[10] = 0; // compression
-  ihdrData[11] = 0; // filter
-  ihdrData[12] = 0; // interlace
+  ihdrData[8] = 8;
+  ihdrData[9] = 6;
+  ihdrData[10] = 0;
+  ihdrData[11] = 0;
+  ihdrData[12] = 0;
   chunks.push(createChunk('IHDR', ihdrData));
-    
-  // IDAT
   chunks.push(createChunk('IDAT', compressed));
-    
-  // IEND
   chunks.push(createChunk('IEND', Buffer.alloc(0)));
-    
+  
   return Buffer.concat(chunks);
 }
 

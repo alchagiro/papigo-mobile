@@ -66,7 +66,7 @@ export default function RegisterScreen({ navigation }) {
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.backButton}>← Atras</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>UBER</Text>
+          <Text style={styles.headerTitle}>PapiGo</Text>
           <View style={{ width: 50 }} />
         </View>
 

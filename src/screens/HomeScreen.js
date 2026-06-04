@@ -179,7 +179,7 @@ export default function HomeScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>UBER</Text>
+        <Text style={styles.headerTitle}>PapiGo</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.headerButton}

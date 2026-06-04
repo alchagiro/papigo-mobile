@@ -10,9 +10,12 @@
     "build:android": "eas build --platform android --profile preview",
     "build:prod": "eas build --platform android --profile production",
     "build:ios": "eas build --platform ios --profile production",
-    "submit:android": "eas submit --platform android --latest"
+    "submit:android": "eas submit --platform android --latest",
+    "postinstall": "patch-package"
   },
   "dependencies": {
+
+
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/native-stack": "^6.9.17",
@@ -23,6 +26,7 @@
     "expo-location": "~55.1.10",
     "expo-secure-store": "~55.0.14",
     "expo-status-bar": "~55.0.6",
+    "hermes-compiler": "^0.16.0",
     "react": "19.2.0",
     "react-native": "0.83.6",
     "react-native-gesture-handler": "~2.30.0",
@@ -37,6 +41,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
-    "babel-preset-expo": "^56.0.14"
+    "babel-preset-expo": "^56.0.14",
+    "patch-package": "^8.0.1"
   }
 }

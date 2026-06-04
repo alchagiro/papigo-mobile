@@ -46,8 +46,8 @@ export default function LoginScreen({ navigation }) {
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.logoContainer}>
-          <Text style={styles.logoText}>UBER</Text>
-          <Text style={styles.tagline}>Mueve tu mundo</Text>
+          <Text style={styles.logoText}>PapiGo</Text>
+          <Text style={styles.tagline}>Tu viaje, nuestra prioridad</Text>
         </View>
 
         <View style={styles.formContainer}>
