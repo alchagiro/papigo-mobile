@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../context/AuthContext";
+import { formatCOP, STATUS_BAR_HEIGHT } from "../config";
 
 export default function TripHistoryScreen({ navigation }) {
   const { user } = useAuth();
@@ -36,15 +37,6 @@ export default function TripHistoryScreen({ navigation }) {
     setRefreshing(true);
     await fetchHistory();
     setRefreshing(false);
-  };
-
-  const formatCOP = (amount) => {
-    if (!amount) return "N/A";
-    return new Intl.NumberFormat("es-CO", {
-      style: "currency",
-      currency: "COP",
-      minimumFractionDigits: 0,
-    }).format(amount);
   };
 
   const formatDate = (dateStr) => {
@@ -239,7 +231,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     backgroundColor: "#000",
-    paddingTop: 50,
+    paddingTop: STATUS_BAR_HEIGHT + 8,
   },
   backButton: {
     fontSize: 16,

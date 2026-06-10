@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   ScrollView,
 } from "react-native";
 import { useAuth } from "../context/AuthContext";
+import { isValidEmail, STATUS_BAR_HEIGHT } from "../config";
 
 export default function LoginScreen({ navigation }) {
   const { login } = useAuth();
@@ -24,16 +25,25 @@ export default function LoginScreen({ navigation }) {
       Alert.alert("Error", "Por favor completa todos los campos");
       return;
     }
+    if (!isValidEmail(email)) {
+      Alert.alert("Error", "Por favor ingresa un correo electronico valido");
+      return;
+    }
 
     setLoading(true);
     try {
-      const user = await login(email, password);
-      Alert.alert("Bienvenido", `Hola ${user.name}!`);
+      await login(email, password);
     } catch (error) {
-      Alert.alert(
-        "Error de Login",
-        error.response?.data?.error || "Credenciales invalidas"
-      );
+      const errMsg = error?.response?.data?.error || "Credenciales invalidas";
+      const errData = error.response?.data;
+
+      if (errData?.suspended) {
+        Alert.alert("Cuenta Suspendida", "Tu cuenta ha sido suspendida. Contacta al administrador.");
+      } else if (errData?.pendingApproval) {
+        Alert.alert("Pendiente de Aprobacion", "Tu cuenta de conductor esta pendiente de aprobacion por el administrador.");
+      } else {
+        Alert.alert("Error de Login", errMsg);
+      }
     } finally {
       setLoading(false);
     }
@@ -41,7 +51,7 @@ export default function LoginScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.container}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -106,7 +116,7 @@ export default function LoginScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#000",
+    backgroundColor: "#00ab67",
   },
   scrollContent: {
     flexGrow: 1,

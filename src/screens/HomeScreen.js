@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   Alert,
@@ -10,11 +9,12 @@ import {
   ActivityIndicator,
   Modal,
 } from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { Marker } from "react-native-maps";
 import * as Location from "expo-location";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../context/AuthContext";
-import { joinTrip, onStatusUpdated, onDriverCancelled } from "../services/socket";
+import { joinTrip, leaveTrip, onStatusUpdated, onDriverCancelled } from "../services/socket";
+import { formatCOP, STATUS_BAR_HEIGHT } from "../config";
 
 export default function HomeScreen({ navigation }) {
   const { user, logout } = useAuth();
@@ -28,16 +28,43 @@ export default function HomeScreen({ navigation }) {
   const [showMap, setShowMap] = useState(false);
   const [tripId, setTripId] = useState(null);
   const [driverCancelled, setDriverCancelled] = useState(false);
+  const [vehicleType, setVehicleType] = useState("car");
+  const [activeBonuses, setActiveBonuses] = useState([]);
+  const [selectedBonusId, setSelectedBonusId] = useState("");
+  const [activeTrip, setActiveTrip] = useState(null);
   const mapRef = useRef(null);
+  const requestingRef = useRef(false);
 
   useEffect(() => {
     getCurrentLocation();
+    fetchActiveTrip();
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("focus", () => {
+      fetchActiveTrip();
+      setDropoffAddress("");
+      setDropoffLocation(null);
+      setFareEstimate(null);
+      setSelectedBonusId("");
+      setDriverCancelled(false);
+      setTripId(null);
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  useEffect(() => {
+    if (user?.role === "passenger") {
+      api.get("/trips/user/bonuses")
+        .then(res => setActiveBonuses(res.data))
+        .catch(() => setActiveBonuses([]));
+    }
+  }, [user]);
 
   useEffect(() => {
     if (tripId) {
       joinTrip(tripId);
-      
+
       const unsubscribeStatus = onStatusUpdated((data) => {
         if (data.tripId === tripId) {
           if (data.status === "accepted") {
@@ -48,11 +75,37 @@ export default function HomeScreen({ navigation }) {
         }
       });
 
+      const pollTrip = async () => {
+        try {
+          const res = await api.get(`/trips/${tripId}`);
+          if (res.data.status === "accepted" || res.data.status === "in_progress") {
+            navigation.navigate("TripProgress", { tripId });
+          } else if (res.data.status === "cancelled") {
+            setDriverCancelled(true);
+          }
+        } catch {}
+      };
+      const pollInterval = setInterval(pollTrip, 5000);
+
       return () => {
+        leaveTrip(tripId);
         unsubscribeStatus();
+        clearInterval(pollInterval);
       };
     }
   }, [tripId]);
+
+  const fetchActiveTrip = async () => {
+    try {
+      const response = await api.get("/trips/history");
+      const active = response.data.find(
+        (t) => t.status === "pending" || t.status === "accepted" || t.status === "in_progress"
+      );
+      setActiveTrip(active || null);
+    } catch (error) {
+      console.error("Failed to fetch active trip");
+    }
+  };
 
   const getCurrentLocation = async () => {
     try {
@@ -64,10 +117,10 @@ export default function HomeScreen({ navigation }) {
           longitude: location.coords.longitude,
         };
         setPickupLocation(loc);
-        
+
         const address = await reverseGeocode(loc.latitude, loc.longitude);
         setPickupAddress(address);
-        
+
         mapRef.current?.animateToRegion({
           ...loc,
           latitudeDelta: 0.01,
@@ -99,7 +152,7 @@ export default function HomeScreen({ navigation }) {
   const handleMapPress = async (e) => {
     const { coordinate } = e.nativeEvent;
     const address = await reverseGeocode(coordinate.latitude, coordinate.longitude);
-    
+
     if (selectingPickup) {
       setPickupLocation(coordinate);
       setPickupAddress(address);
@@ -125,6 +178,7 @@ export default function HomeScreen({ navigation }) {
         dropoffLng: dropoffLocation.longitude,
         pickupAddress,
         dropoffAddress,
+        vehicleType,
       });
       setFareEstimate(response.data);
     } catch (error) {
@@ -135,11 +189,13 @@ export default function HomeScreen({ navigation }) {
   };
 
   const handleRequestTrip = async () => {
+    if (requestingRef.current) return;
     if (!pickupAddress || !dropoffAddress || !pickupLocation || !dropoffLocation) {
       Alert.alert("Error", "Por favor completa todos los campos");
       return;
     }
 
+    requestingRef.current = true;
     setLoading(true);
     setDriverCancelled(false);
     try {
@@ -152,14 +208,17 @@ export default function HomeScreen({ navigation }) {
         dropoffAddress,
         fare: fareEstimate?.fare,
         paymentMethod: "card",
+        vehicleType: vehicleType,
+        bonusId: selectedBonusId || null,
       });
 
       setTripId(response.data.id);
       navigation.navigate("TripProgress", { tripId: response.data.id });
     } catch (error) {
-      Alert.alert("Error", error.response?.data?.error || "Error al solicitar viaje");
+      Alert.alert("Error", error?.response?.data?.error || "Error al solicitar viaje");
     } finally {
       setLoading(false);
+      setTimeout(() => { requestingRef.current = false; }, 2000);
     }
   };
 
@@ -167,14 +226,17 @@ export default function HomeScreen({ navigation }) {
     logout();
   };
 
-  const formatCOP = (amount) => {
-    if (!amount) return "N/A";
-    return new Intl.NumberFormat("es-CO", {
-      style: "currency",
-      currency: "COP",
-      minimumFractionDigits: 0,
-    }).format(amount);
+  const statusLabels = {
+    pending: "Esperando conductor...",
+    accepted: "Conductor en camino",
+    in_progress: "Viaje en curso",
+    completed: "Viaje completado",
+    cancelled: "Viaje cancelado",
   };
+
+  const discountedFare = fareEstimate?.fare && selectedBonusId
+    ? Math.max(0, fareEstimate.fare - (activeBonuses.find(b => String(b.id) === String(selectedBonusId))?.amount || 0))
+    : null;
 
   return (
     <View style={styles.container}>
@@ -192,6 +254,24 @@ export default function HomeScreen({ navigation }) {
           </TouchableOpacity>
         </View>
       </View>
+
+      {activeTrip && (
+        <TouchableOpacity
+          style={styles.activeTripBanner}
+          onPress={() => navigation.navigate("TripProgress", { tripId: activeTrip.id })}
+        >
+          <View style={styles.activeTripBannerContent}>
+            <Text style={styles.activeTripBannerTitle}>Viaje Activo</Text>
+            <Text style={styles.activeTripBannerText}>
+              {statusLabels[activeTrip.status] || activeTrip.status}
+            </Text>
+            <Text style={styles.activeTripBannerRoute}>
+              {activeTrip.pickup_address} → {activeTrip.dropoff_address}
+            </Text>
+          </View>
+          <Text style={styles.activeTripBannerButton}>Ver Viaje</Text>
+        </TouchableOpacity>
+      )}
 
       <MapView
         ref={mapRef}
@@ -249,6 +329,52 @@ export default function HomeScreen({ navigation }) {
               {dropoffAddress || "Toca para seleccionar en mapa"}
             </Text>
           </TouchableOpacity>
+
+          <Text style={styles.vehicleLabel}>Tipo de vehiculo</Text>
+          <View style={styles.vehicleContainer}>
+            <TouchableOpacity
+              style={[styles.vehicleButton, vehicleType === "car" && styles.vehicleActive]}
+              onPress={() => setVehicleType("car")}
+            >
+              <Text style={[styles.vehicleText, vehicleType === "car" && styles.vehicleTextActive]}>
+                Carro
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.vehicleButton, vehicleType === "motorcycle" && styles.vehicleActive]}
+              onPress={() => setVehicleType("motorcycle")}
+            >
+              <Text style={[styles.vehicleText, vehicleType === "motorcycle" && styles.vehicleTextActive]}>
+                Moto
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {activeBonuses.length > 0 && (
+            <View style={styles.bonusSection}>
+              <Text style={styles.bonusTitle}>Tienes Bonos Disponibles</Text>
+              <TouchableOpacity
+                style={styles.bonusSelector}
+                onPress={() => {
+                  const currentIndex = activeBonuses.findIndex(b => String(b.id) === String(selectedBonusId));
+                  const nextIndex = (currentIndex + 1) % (activeBonuses.length + 1);
+                  setSelectedBonusId(nextIndex === 0 ? "" : String(activeBonuses[nextIndex - 1].id));
+                }}
+              >
+                <Text style={styles.bonusSelectorText}>
+                  {selectedBonusId
+                    ? `${formatCOP(activeBonuses.find(b => String(b.id) === String(selectedBonusId))?.amount)} - ${activeBonuses.find(b => String(b.id) === String(selectedBonusId))?.description || "Sin descripcion"}`
+                    : "Sin bono"}
+                </Text>
+              </TouchableOpacity>
+              {discountedFare !== null && (
+                <View style={styles.discountPreview}>
+                  <Text style={styles.discountOriginal}>Tarifa original: {formatCOP(fareEstimate?.fare)}</Text>
+                  <Text style={styles.discountFinal}>Tarifa con bono: {formatCOP(discountedFare)}</Text>
+                </View>
+              )}
+            </View>
+          )}
 
           <TouchableOpacity
             style={styles.secondaryButton}
@@ -311,8 +437,6 @@ export default function HomeScreen({ navigation }) {
           </View>
         </View>
       </Modal>
-
-
     </View>
   );
 }
@@ -328,7 +452,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     backgroundColor: "#000",
-    paddingTop: 50,
+    paddingTop: STATUS_BAR_HEIGHT + 8,
   },
   headerTitle: {
     fontSize: 24,
@@ -357,7 +481,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
-    maxHeight: "45%",
+    maxHeight: "50%",
   },
   formTitle: {
     fontSize: 20,
@@ -450,7 +574,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     backgroundColor: "#000",
-    paddingTop: 50,
+    paddingTop: STATUS_BAR_HEIGHT + 8,
   },
   modalTitle: {
     fontSize: 18,
@@ -473,78 +597,109 @@ const styles = StyleSheet.create({
     color: "#666",
     fontSize: 14,
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  negotiationModal: {
-    backgroundColor: "white",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-  },
-  offerCard: {
-    backgroundColor: "#f8f9fa",
-    borderRadius: 12,
-    padding: 16,
-    marginVertical: 16,
+  activeTripBanner: {
+    flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "#cce5ff",
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#b8daff",
   },
-  offerLabel: {
+  activeTripBannerContent: {
+    flex: 1,
+  },
+  activeTripBannerTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#004085",
+  },
+  activeTripBannerText: {
+    fontSize: 12,
+    color: "#004085",
+    marginTop: 2,
+  },
+  activeTripBannerRoute: {
+    fontSize: 11,
+    color: "#004085",
+    marginTop: 2,
+  },
+  activeTripBannerButton: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#276ef1",
+    paddingHorizontal: 12,
+  },
+  vehicleLabel: {
     fontSize: 14,
     color: "#666",
+    marginBottom: 8,
   },
-  offerAmount: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: "#00ab67",
-  },
-  offerBy: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 4,
-  },
-  modalInput: {
-    backgroundColor: "#f8f9fa",
-    borderRadius: 8,
-    padding: 16,
-    fontSize: 18,
-    textAlign: "center",
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#e0e0e0",
-  },
-  modalButtons: {
+  vehicleContainer: {
     flexDirection: "row",
     gap: 12,
     marginBottom: 12,
   },
-  acceptButton: {
+  vehicleButton: {
     flex: 1,
-    backgroundColor: "#00ab67",
+    padding: 12,
     borderRadius: 8,
-    padding: 16,
     alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#e0e0e0",
+    backgroundColor: "#f8f9fa",
   },
-  counterButton: {
-    flex: 1,
-    backgroundColor: "#276ef1",
-    borderRadius: 8,
-    padding: 16,
-    alignItems: "center",
+  vehicleActive: {
+    borderColor: "#00ab67",
+    backgroundColor: "#e8f5e9",
   },
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  cancelButton: {
-    padding: 16,
-    alignItems: "center",
-  },
-  cancelButtonText: {
+  vehicleText: {
+    fontSize: 14,
     color: "#666",
+    fontWeight: "500",
+  },
+  vehicleTextActive: {
+    color: "#00ab67",
+    fontWeight: "700",
+  },
+  bonusSection: {
+    backgroundColor: "#fff3cd",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#ffc107",
+  },
+  bonusTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#856404",
+    marginBottom: 8,
+  },
+  bonusSelector: {
+    backgroundColor: "#fff",
+    borderRadius: 6,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+  },
+  bonusSelectorText: {
+    fontSize: 14,
+    color: "#333",
+  },
+  discountPreview: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: "#e8f5e9",
+    borderRadius: 6,
+  },
+  discountOriginal: {
+    fontSize: 12,
+    color: "#666",
+  },
+  discountFinal: {
     fontSize: 16,
+    fontWeight: "700",
+    color: "#137333",
+    marginTop: 2,
   },
 });

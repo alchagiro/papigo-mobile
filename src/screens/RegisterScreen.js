@@ -12,6 +12,7 @@ import {
   ScrollView,
 } from "react-native";
 import { useAuth } from "../context/AuthContext";
+import { STATUS_BAR_HEIGHT } from "../config";
 
 export default function RegisterScreen({ navigation }) {
   const { register } = useAuth();
@@ -41,15 +42,29 @@ export default function RegisterScreen({ navigation }) {
 
     setLoading(true);
     try {
-      const user = await register(name, email, phone, password, role);
-      Alert.alert(
-        "Registro Exitoso",
-        `Bienvenido ${user.name}! Tu cuenta como ${role === "driver" ? "conductor" : "pasajero"} ha sido creada.`
-      );
+      const result = await register(name, email, phone, password, role);
+
+      if (result?.pendingApproval) {
+        Alert.alert(
+          "Registro Exitoso",
+          "Tu cuenta de conductor ha sido creada y esta pendiente de aprobacion por el administrador. Recibiras una notificacion cuando sea activada.",
+          [
+            {
+              text: "OK",
+              onPress: () => navigation.navigate("Login"),
+            },
+          ]
+        );
+      } else {
+        Alert.alert(
+          "Registro Exitoso",
+          `Bienvenido ${result.name}! Tu cuenta como pasajero ha sido creada.`
+        );
+      }
     } catch (error) {
       Alert.alert(
         "Error de Registro",
-        error.response?.data?.error || "No se pudo crear la cuenta"
+        error?.response?.data?.error || "No se pudo crear la cuenta"
       );
     } finally {
       setLoading(false);
@@ -58,7 +73,7 @@ export default function RegisterScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={styles.container}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -164,7 +179,7 @@ export default function RegisterScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#000",
+    backgroundColor: "#00ab67",
   },
   scrollContent: {
     flexGrow: 1,
@@ -174,7 +189,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 16,
-    paddingTop: 50,
+    paddingTop: STATUS_BAR_HEIGHT + 8,
   },
   backButton: {
     fontSize: 16,

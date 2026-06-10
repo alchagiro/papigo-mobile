@@ -1,677 +1,413 @@
 import React, { useState, useEffect, useRef } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  ActivityIndicator,
-  BackHandler,
-  Modal,
-  TextInput,
-} from "react-native";
-import MapView, { Marker } from "react-native-maps";
+import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, ActivityIndicator, Image } from "react-native";
+import MapView, { Marker, Polyline } from "react-native-maps";
+import * as SecureStore from "expo-secure-store";
 import * as Location from "expo-location";
+import { onStatusUpdated, onDriverCancelled, onDriverPosition, joinTrip, leaveTrip, updateDriverLocation } from "../services/socket";
+import { API_URL, SOCKET_URL, formatCOP, STATUS_BAR_HEIGHT } from "../config";
 import { useAuth } from "../context/AuthContext";
-import { api } from "../context/AuthContext";
-import {
-  joinTrip,
-  onDriverPosition,
-  onStatusUpdated,
-  updateDriverLocation,
-  sendTripStatusUpdate,
-  onDriverCancelled,
-} from "../services/socket";
+
+const fetchWithAuth = async (path, options = {}) => {
+  const token = await SecureStore.getItemAsync("token");
+  if (!token) throw new Error("No autenticado");
+  const res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...options.headers,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+};
 
 export default function TripProgressScreen({ route, navigation }) {
   const { tripId } = route.params;
   const { user } = useAuth();
+  const isDriver = user?.role === "driver";
   const [trip, setTrip] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [rating, setRating] = useState(0);
-  const [comment, setComment] = useState("");
-  const [driverPos, setDriverPos] = useState(null);
-  const [driverCancelled, setDriverCancelled] = useState(false);
-  const locationWatchId = useRef(null);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [driverLocation, setDriverLocation] = useState(null);
+  const driverLocationWatcher = useRef(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    fetchTrip();
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  const loadTrip = async () => {
+    try {
+      const data = await fetchWithAuth(`/trips/${tripId}`);
+      if (mountedRef.current) setTrip(data);
+    } catch (error) {
+      if (mountedRef.current) Alert.alert("Error", "Error al cargar viaje: " + error.message);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTrip();
     joinTrip(tripId);
 
-    const unsubscribePosition = onDriverPosition((data) => {
-      if (data.tripId === tripId) {
-        setDriverPos({ latitude: data.lat, longitude: data.lng });
-      }
-    });
-
-    const unsubscribeStatus = onStatusUpdated((data) => {
-      if (data.tripId === tripId) {
-        fetchTrip();
-        if (data.status === "completed") {
-          Alert.alert("Viaje Completado", "El viaje ha sido completado exitosamente.");
-        } else if (data.status === "cancelled") {
-          setDriverCancelled(true);
+    const unsubStatus = onStatusUpdated((data) => {
+      try {
+        if (data.tripId === tripId && mountedRef.current) {
+          setTrip((prev) => prev ? { ...prev, status: data.status } : prev);
         }
-      }
+      } catch (e) { console.error("status-updated callback error:", e); }
     });
 
-    const unsubscribeCancelled = onDriverCancelled((data) => {
-      if (data.tripId === tripId) {
-        setDriverCancelled(true);
-      }
+    const unsubCancelled = onDriverCancelled((data) => {
+      try {
+        if (data.tripId === tripId && mountedRef.current) {
+          Alert.alert("Viaje cancelado", data.message || "El viaje fue cancelado");
+          navigation.replace(isDriver ? "DriverHome" : "Home");
+        }
+      } catch (e) { console.error("driver-cancelled callback error:", e); }
     });
 
-    const backAction = () => {
-      if (trip && ["pending", "accepted", "in_progress"].includes(trip.status)) {
-        Alert.alert(
-          "Viaje Activo",
-          "Tienes un viaje activo. El viaje seguira activo.",
-          [{ text: "OK" }]
-        );
-        return true;
-      }
-      return false;
-    };
+    const unsubDriverPos = onDriverPosition((data) => {
+      try {
+        if (mountedRef.current && data.lat && data.lng) {
+          setDriverLocation({ latitude: data.lat, longitude: data.lng });
+        }
+      } catch (e) { console.error("driver-position callback error:", e); }
+    });
 
-    const backHandler = BackHandler.addEventListener("hardwareBackPress", backAction);
-
-    if (user?.role === "driver") {
-      startLocationTracking();
-    }
+    const pollInterval = setInterval(() => {
+      loadTrip();
+    }, 5000);
 
     return () => {
-      unsubscribePosition();
-      unsubscribeStatus();
-      unsubscribeCancelled();
-      backHandler.remove();
-      stopLocationTracking();
+      clearInterval(pollInterval);
+      try { leaveTrip(tripId); } catch (e) { console.error("leaveTrip error:", e); }
+      try { unsubStatus(); } catch (e) { console.error("unsubStatus error:", e); }
+      try { unsubCancelled(); } catch (e) { console.error("unsubCancelled error:", e); }
+      try { unsubDriverPos(); } catch (e) { console.error("unsubDriverPos error:", e); }
     };
   }, [tripId]);
 
-  const startLocationTracking = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === "granted") {
-        locationWatchId.current = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.High,
-            distanceInterval: 10,
-            timeInterval: 3000,
-          },
+  useEffect(() => {
+    if (!isDriver || !trip || !user?.id) return;
+    const activeStatuses = ["accepted", "in_progress"];
+    if (!activeStatuses.includes(trip.status)) return;
+
+    if (driverLocationWatcher.current) {
+      driverLocationWatcher.current.remove();
+      driverLocationWatcher.current = null;
+    }
+
+    const startWatching = async () => {
+      try {
+        const { granted } = await Location.requestForegroundPermissionsAsync();
+        if (!granted) return;
+        const watcher = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 10, timeInterval: 3000 },
           (loc) => {
-            updateDriverLocation({
-              driverId: user.id,
-              lat: loc.coords.latitude,
-              lng: loc.coords.longitude,
-              tripId,
-            });
+            const { latitude, longitude } = loc.coords;
+            setDriverLocation({ latitude, longitude });
+            updateDriverLocation({ driverId: user.id, lat: latitude, lng: longitude, tripId });
           }
         );
+        if (mountedRef.current) driverLocationWatcher.current = watcher;
+      } catch (e) {
+        console.error("driver location watch error:", e);
       }
-    } catch (error) {
-      console.error("Error tracking location:", error);
-    }
-  };
+    };
+    startWatching();
 
-  const stopLocationTracking = () => {
-    if (locationWatchId.current) {
-      locationWatchId.current.remove();
-      locationWatchId.current = null;
-    }
-  };
-
-  const fetchTrip = async () => {
-    try {
-      const response = await api.get(`/trips/${tripId}`);
-      setTrip(response.data);
-    } catch (error) {
-      Alert.alert("Error", "Error al cargar el viaje");
-    }
-  };
+    return () => {
+      if (driverLocationWatcher.current) {
+        driverLocationWatcher.current.remove();
+        driverLocationWatcher.current = null;
+      }
+    };
+  }, [isDriver, trip?.status, user?.id]);
 
   const handleStartTrip = async () => {
-    setLoading(true);
     try {
-      await api.post(`/trips/start/${tripId}`);
-      sendTripStatusUpdate({ tripId, status: "in_progress" });
-      fetchTrip();
+      setActionLoading(true);
+      await fetchWithAuth(`/trips/start/${tripId}`, { method: "POST" });
+      if (mountedRef.current) loadTrip();
     } catch (error) {
-      Alert.alert("Error", error.response?.data?.error || "Error al iniciar viaje");
+      if (mountedRef.current) Alert.alert("Error", error.message);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setActionLoading(false);
     }
   };
 
   const handleCompleteTrip = async () => {
-    setLoading(true);
     try {
-      await api.post(`/trips/complete/${tripId}`, {
-        distance: trip.distance || 5,
-        duration: trip.duration || 15,
-        fare: trip.fare || trip.offered_fare,
+      setActionLoading(true);
+      const distance = trip?.distance ? parseFloat(trip.distance) : null;
+      const duration = trip?.duration ? parseFloat(trip.duration) : null;
+      await fetchWithAuth(`/trips/complete/${tripId}`, {
+        method: "POST",
+        body: JSON.stringify({
+          distance: distance || 0,
+          duration: duration || 0,
+        }),
       });
-      sendTripStatusUpdate({ tripId, status: "completed" });
-      fetchTrip();
-      Alert.alert("Exito", "Viaje completado exitosamente");
+      if (mountedRef.current) {
+        Alert.alert("Viaje completado", "El viaje ha finalizado");
+        loadTrip();
+      }
     } catch (error) {
-      Alert.alert("Error", error.response?.data?.error || "Error al completar viaje");
+      if (mountedRef.current) Alert.alert("Error", error.message);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setActionLoading(false);
     }
   };
 
-  const handleCancel = async () => {
-    Alert.alert(
-      "Cancelar Viaje",
-      "Estas seguro de que quieres cancelar este viaje?",
-      [
-        { text: "No", style: "cancel" },
-        {
-          text: "Si, cancelar",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await api.post(`/trips/cancel/${tripId}`);
-              navigation.goBack();
-            } catch (error) {
-              Alert.alert("Error", error.response?.data?.error || "Error al cancelar viaje");
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
+  const handleCancelTrip = async () => {
+    try {
+      setActionLoading(true);
+      const reason = isDriver ? "El conductor cancelo el viaje" : "El pasajero cancelo el viaje";
+      await fetchWithAuth(`/trips/cancel/${tripId}`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      });
+      if (mountedRef.current) {
+        Alert.alert("Viaje cancelado", "Has cancelado el viaje");
+        loadTrip();
+      }
+    } catch (error) {
+      if (mountedRef.current) Alert.alert("Error", error.message);
+    } finally {
+      if (mountedRef.current) setActionLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#00ab67" />
+        <Text style={styles.loadingText}>Cargando viaje...</Text>
+      </View>
     );
-  };
-
-  const handleSubmitRating = async () => {
-    if (!rating) {
-      Alert.alert("Error", "Por favor selecciona una calificacion");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await api.post(`/ratings`, {
-        tripId,
-        rating,
-        comment,
-        driverId: trip.driver_id,
-      });
-      Alert.alert("Exito", "Gracias por tu calificacion!");
-      navigation.goBack();
-    } catch (error) {
-      Alert.alert("Error", "Error al enviar calificacion");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const formatCOP = (amount) => {
-    if (!amount) return "N/A";
-    return new Intl.NumberFormat("es-CO", {
-      style: "currency",
-      currency: "COP",
-      minimumFractionDigits: 0,
-    }).format(amount);
-  };
-
-  const statusLabels = {
-    pending: "Esperando conductor...",
-    accepted: "Conductor en camino!",
-    in_progress: "Viaje en curso",
-    completed: "Viaje completado",
-    cancelled: "Viaje cancelado",
-  };
+  }
 
   if (!trip) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#00ab67" />
-        <Text style={styles.loadingText}>Cargando detalles del viaje...</Text>
+      <View style={styles.center}>
+        <Text style={styles.errorText}>No se pudo cargar el viaje</Text>
+        <TouchableOpacity style={styles.button} onPress={() => navigation.replace(isDriver ? "DriverHome" : "Home")}>
+          <Text style={styles.buttonText}>Volver</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
-  if (driverCancelled) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Viaje</Text>
-        </View>
-        <View style={styles.cancelledContainer}>
-          <Text style={styles.cancelledIcon}>🚗</Text>
-          <Text style={styles.cancelledTitle}>Conductor Cancelo</Text>
-          <Text style={styles.cancelledText}>Buscando otro conductor cercano...</Text>
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={styles.primaryButtonText}>Volver al Inicio</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
+  const statusColors = {
+    accepted: "#f59e0b",
+    in_progress: "#3b82f6",
+    completed: "#00ab67",
+    cancelled: "#ef4444",
+  };
+
+  const statusLabels = {
+    accepted: "Aceptado",
+    in_progress: "En curso",
+    completed: "Completado",
+    cancelled: "Cancelado",
+  };
+
+  const pickupLat = trip.pickup_lat ? parseFloat(trip.pickup_lat) : null;
+  const pickupLng = trip.pickup_lng ? parseFloat(trip.pickup_lng) : null;
+  const dropoffLat = trip.dropoff_lat ? parseFloat(trip.dropoff_lat) : null;
+  const dropoffLng = trip.dropoff_lng ? parseFloat(trip.dropoff_lng) : null;
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => {
-            if (trip && ["pending", "accepted", "in_progress"].includes(trip.status)) {
-              Alert.alert(
-                "Viaje Activo",
-                "El viaje seguira activo.",
-                [{ text: "OK" }]
-              );
-            } else {
-              navigation.goBack();
-            }
-          }}
-        >
-          <Text style={styles.backButtonText}>← Atras</Text>
-        </TouchableOpacity>
         <Text style={styles.headerTitle}>Viaje</Text>
+        <View style={[styles.statusBadge, { backgroundColor: statusColors[trip.status] || "#666" }]}>
+          <Text style={styles.statusText}>{statusLabels[trip.status] || trip.status}</Text>
+        </View>
       </View>
 
-      <MapView
-        style={styles.map}
-        initialRegion={{
-          latitude: trip.pickup_lat || 3.4516,
-          longitude: trip.pickup_lng || -76.532,
-          latitudeDelta: 0.02,
-          longitudeDelta: 0.02,
-        }}
-      >
-        <Marker
-          coordinate={{ latitude: trip.pickup_lat, longitude: trip.pickup_lng }}
-          title="Recogida"
-          pinColor="#00ab67"
-        />
-        <Marker
-          coordinate={{ latitude: trip.dropoff_lat, longitude: trip.dropoff_lng }}
-          title="Destino"
-          pinColor="#000"
-        />
-        {driverPos && (
-          <Marker
-            coordinate={driverPos}
-            title="Conductor"
-            pinColor="#276ef1"
-          />
-        )}
-      </MapView>
-
-      <ScrollView style={styles.content}>
-        <View style={styles.card}>
-          <Text style={styles.status}>{statusLabels[trip.status]}</Text>
-          <View style={[styles.statusBadge, styles[`status${trip.status}`]]}>
-            <Text style={styles.statusBadgeText}>{trip.status}</Text>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Informacion del Viaje</Text>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Recogida:</Text>
-            <Text style={styles.detailText}>{trip.pickup_address}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Destino:</Text>
-            <Text style={styles.detailText}>{trip.dropoff_address}</Text>
-          </View>
-          {trip.distance && (
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Distancia:</Text>
-              <Text style={styles.detailText}>{trip.distance?.toFixed(1)} km</Text>
-            </View>
-          )}
-          {trip.duration && (
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Duracion:</Text>
-              <Text style={styles.detailText}>~{trip.duration} min</Text>
-            </View>
-          )}
-        </View>
-
-        {trip.fare && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Tarifa</Text>
-            <Text style={styles.fareAmount}>{formatCOP(trip.fare)}</Text>
-          </View>
-        )}
-
-        {trip.driver_name && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Conductor</Text>
-            <Text style={styles.personName}>{trip.driver_name}</Text>
-          </View>
-        )}
-
-        {trip.passenger_name && user?.role === "driver" && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Pasajero</Text>
-            <Text style={styles.personName}>{trip.passenger_name}</Text>
-          </View>
-        )}
-
-        {user?.role === "driver" && trip.status === "accepted" && (
-          <View style={styles.buttonGroup}>
-            <TouchableOpacity
-              style={[styles.button, styles.startButton]}
-              onPress={handleStartTrip}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text style={styles.buttonText}>Iniciar Viaje</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
-              onPress={handleCancel}
-              disabled={loading}
-            >
-              <Text style={styles.buttonText}>Cancelar</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {user?.role === "driver" && trip.status === "in_progress" && (
-          <TouchableOpacity
-            style={[styles.button, styles.completeButton]}
-            onPress={handleCompleteTrip}
-            disabled={loading}
+      {(pickupLat && pickupLng) ? (
+        <View style={styles.mapContainer}>
+          <MapView
+            style={styles.map}
+            initialRegion={{
+              latitude: pickupLat,
+              longitude: pickupLng,
+              latitudeDelta: 0.05,
+              longitudeDelta: 0.05,
+            }}
           >
-            {loading ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.buttonText}>Completar Viaje</Text>
+            <Marker
+              coordinate={{ latitude: pickupLat, longitude: pickupLng }}
+              title="Recogida"
+              description={trip.pickup_address || ""}
+              pinColor="#00ab67"
+            />
+            {(dropoffLat && dropoffLng) && (
+              <Marker
+                coordinate={{ latitude: dropoffLat, longitude: dropoffLng }}
+                title="Destino"
+                description={trip.dropoff_address || ""}
+                pinColor="#ef4444"
+              />
             )}
-          </TouchableOpacity>
-        )}
+            {(pickupLat && pickupLng && dropoffLat && dropoffLng) && (
+              <Polyline
+                coordinates={[
+                  { latitude: pickupLat, longitude: pickupLng },
+                  { latitude: dropoffLat, longitude: dropoffLng },
+                ]}
+                strokeColor="#00ab67"
+                strokeWidth={3}
+              />
+            )}
+            {driverLocation && ["accepted", "in_progress"].includes(trip.status) && (
+              <Marker
+                coordinate={driverLocation}
+                title={isDriver ? "Tu ubicacion" : "Conductor"}
+                description={isDriver ? "" : "Ubicacion en tiempo real"}
+                pinColor="#276ef1"
+              />
+            )}
+          </MapView>
+        </View>
+      ) : (
+        <View style={styles.mapPlaceholder}>
+          <Text style={styles.mapPlaceholderText}>Ubicación no disponible</Text>
+        </View>
+      )}
 
-        {(trip.status === "completed" || trip.status === "cancelled") && (
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={styles.secondaryButtonText}>Volver al Inicio</Text>
-          </TouchableOpacity>
+      <ScrollView style={styles.infoSection}>
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Dirección de recogida</Text>
+          <Text style={styles.infoValue}>{trip.pickup_address || "N/A"}</Text>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Destino</Text>
+          <Text style={styles.infoValue}>{trip.dropoff_address || "N/A"}</Text>
+        </View>
+          {trip.fare && (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Tarifa</Text>
+              <Text style={styles.infoValue}>{formatCOP(trip.fare)}</Text>
+            </View>
+          )}
+          {trip.offered_fare && (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Tarifa ofrecida</Text>
+              <Text style={styles.infoValue}>{formatCOP(trip.offered_fare)}</Text>
+            </View>
+          )}
+        {trip.distance && (
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Distancia</Text>
+            <Text style={styles.infoValue}>{parseFloat(trip.distance).toFixed(1)} km</Text>
+          </View>
+        )}
+        {trip.duration && (
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Duración</Text>
+            <Text style={styles.infoValue}>{Math.round(parseFloat(trip.duration))} min</Text>
+          </View>
+        )}
+        {trip.driver_name && (
+          <View style={[styles.infoRow, styles.driverSection]}>
+            <Text style={styles.infoLabel}>Conductor</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 4 }}>
+              {trip.driver_photo_url && (
+                <Image
+                  source={{ uri: SOCKET_URL + trip.driver_photo_url }}
+                  style={{ width: 44, height: 44, borderRadius: 22 }}
+                />
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.infoValue}>{trip.driver_name}</Text>
+                {trip.driver_vehicle && (
+                  <Text style={styles.infoSubValue}>
+                    Vehiculo: {trip.driver_vehicle}
+                  </Text>
+                )}
+              </View>
+            </View>
+          </View>
         )}
       </ScrollView>
 
-      {user?.role === "passenger" && trip.status === "completed" && (
-        <View style={styles.ratingContainer}>
-          <Text style={styles.cardTitle}>Califica a tu conductor</Text>
-          <View style={styles.ratingRow}>
-            {[1, 2, 3, 4, 5].map((star) => (
-              <TouchableOpacity key={star} onPress={() => setRating(star)}>
-                <Text style={[styles.star, star <= rating && styles.starActive]}>★</Text>
+      <View style={styles.actions}>
+        {isDriver ? (
+          <>
+            {trip.status === "accepted" && (
+              <TouchableOpacity style={styles.actionButton} onPress={handleStartTrip} disabled={actionLoading}>
+                {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>Iniciar viaje</Text>}
               </TouchableOpacity>
-            ))}
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Agrega un comentario (opcional)"
-            value={comment}
-            onChangeText={setComment}
-            multiline
-          />
-          <TouchableOpacity
-            style={[styles.button, styles.ratingButton]}
-            onPress={handleSubmitRating}
-            disabled={!rating || loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.buttonText}>Enviar Calificacion</Text>
             )}
+            {trip.status === "in_progress" && (
+              <TouchableOpacity style={[styles.actionButton, { backgroundColor: "#00ab67" }]} onPress={handleCompleteTrip} disabled={actionLoading}>
+                {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>Completar viaje</Text>}
+              </TouchableOpacity>
+            )}
+            {(trip.status === "accepted" || trip.status === "in_progress") && (
+              <TouchableOpacity style={[styles.actionButton, { backgroundColor: "#ef4444", marginTop: 8 }]} onPress={handleCancelTrip} disabled={actionLoading}>
+                {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>Cancelar viaje</Text>}
+              </TouchableOpacity>
+            )}
+          </>
+        ) : (
+          <>
+            {(trip.status === "pending" || trip.status === "accepted") && (
+              <TouchableOpacity style={[styles.actionButton, { backgroundColor: "#ef4444" }]} onPress={handleCancelTrip} disabled={actionLoading}>
+                {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>Cancelar viaje</Text>}
+              </TouchableOpacity>
+            )}
+          </>
+        )}
+        {(trip.status === "completed" || trip.status === "cancelled") && (
+          <TouchableOpacity style={styles.actionButton} onPress={() => navigation.replace(isDriver ? "DriverHome" : "Home")}>
+            <Text style={styles.actionButtonText}>Volver</Text>
           </TouchableOpacity>
-        </View>
-      )}
-
-      {(trip.status === "completed" || trip.status === "cancelled") && (
-        <TouchableOpacity
-          style={styles.secondaryButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.secondaryButtonText}>Volver al Inicio</Text>
-        </TouchableOpacity>
-      )}
+        )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f5f5f5",
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#fff",
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: "#666",
-  },
+  container: { flex: 1, backgroundColor: "#fff" },
+  center: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#fff" },
+  loadingText: { marginTop: 12, fontSize: 16, color: "#666" },
+  errorText: { fontSize: 16, color: "#ef4444", marginBottom: 16 },
   header: {
     flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    padding: 16,
-    backgroundColor: "#000",
-    paddingTop: 50,
-  },
-  backButton: {
-    marginRight: 16,
-  },
-  backButtonText: {
-    fontSize: 16,
-    color: "#fff",
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#fff",
-  },
-  map: {
-    height: 250,
-  },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
-  card: {
-    backgroundColor: "white",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    elevation: 2,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 12,
-    color: "#333",
-  },
-  status: {
-    fontSize: 18,
-    fontWeight: "600",
-    marginBottom: 8,
-    color: "#333",
-  },
-  statusBadge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
-  },
-  statuspending: {
-    backgroundColor: "#fff3cd",
-  },
-  statusaccepted: {
-    backgroundColor: "#cce5ff",
-  },
-  statusin_progress: {
-    backgroundColor: "#d4edda",
-  },
-  statuscompleted: {
-    backgroundColor: "#d4edda",
-  },
-  statuscancelled: {
-    backgroundColor: "#f8d7da",
-  },
-  statusBadgeText: {
-    fontSize: 12,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    color: "#333",
-  },
-  detailRow: {
-    flexDirection: "row",
-    marginBottom: 8,
-  },
-  detailLabel: {
-    fontWeight: "600",
-    color: "#666",
-    width: 80,
-  },
-  detailText: {
-    flex: 1,
-    color: "#333",
-  },
-  fareAmount: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#00ab67",
-  },
-  offerInfo: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 4,
-  },
-  personName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-  },
-  buttonGroup: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 16,
-  },
-  button: {
-    flex: 1,
-    borderRadius: 8,
-    padding: 16,
-    alignItems: "center",
-  },
-  startButton: {
+    paddingHorizontal: 16,
+    paddingTop: STATUS_BAR_HEIGHT + 4,
+    paddingBottom: 12,
     backgroundColor: "#00ab67",
   },
-  completeButton: {
+  headerTitle: { fontSize: 20, fontWeight: "bold", color: "#fff" },
+  statusBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
+  statusText: { color: "#fff", fontSize: 14, fontWeight: "600" },
+  mapContainer: { height: 220 },
+  map: { flex: 1 },
+  mapPlaceholder: { height: 220, justifyContent: "center", alignItems: "center", backgroundColor: "#f3f4f6" },
+  mapPlaceholderText: { fontSize: 14, color: "#9ca3af" },
+  infoSection: { flex: 1, padding: 16 },
+  infoRow: { marginBottom: 12 },
+  infoLabel: { fontSize: 12, color: "#9ca3af", marginBottom: 2 },
+  infoValue: { fontSize: 16, color: "#1f2937", fontWeight: "500" },
+  infoSubValue: { fontSize: 14, color: "#6b7280", marginTop: 2 },
+  driverSection: { borderTopWidth: 1, borderTopColor: "#e5e7eb", paddingTop: 12, marginTop: 4 },
+  actions: { padding: 16, borderTopWidth: 1, borderTopColor: "#e5e7eb" },
+  actionButton: {
     backgroundColor: "#00ab67",
-    marginBottom: 16,
-  },
-  cancelButton: {
-    backgroundColor: "#d93025",
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  ratingButton: {
-    backgroundColor: "#00ab67",
-  },
-  ratingRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 16,
-  },
-  ratingContainer: {
-    backgroundColor: "white",
-    borderRadius: 12,
-    padding: 16,
-    margin: 16,
-  },
-  star: {
-    fontSize: 36,
-    color: "#ddd",
-  },
-  starActive: {
-    color: "#ffc107",
-  },
-  input: {
-    backgroundColor: "#f8f9fa",
+    paddingVertical: 14,
     borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: "#e0e0e0",
-    minHeight: 80,
-    textAlignVertical: "top",
-  },
-  secondaryButton: {
-    backgroundColor: "#f5f5f5",
-    borderRadius: 8,
-    padding: 16,
     alignItems: "center",
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#ddd",
   },
-  secondaryButtonText: {
-    color: "#333",
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  primaryButton: {
-    backgroundColor: "#00ab67",
-    borderRadius: 8,
-    padding: 16,
-    alignItems: "center",
-    marginTop: 16,
-  },
-  primaryButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  cancelledContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 32,
-  },
-  cancelledIcon: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  cancelledTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 8,
-  },
-  cancelledText: {
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 24,
-  },
+  actionButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 });
